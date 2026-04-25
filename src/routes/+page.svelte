@@ -4,6 +4,7 @@ import { base } from '$app/paths';
 import { onMount, onDestroy } from 'svelte';
 import settingsIcon from '$lib/assets/settings.svg';
 import OmikujiAnimation from '$lib/components/OmikujiAnimation.svelte';
+import LightningReveal from '$lib/components/LightningReveal.svelte';
 import {
   decodeNsec,
   createTextEvent,
@@ -31,6 +32,7 @@ let isWaitingForZap = false;
 let zapDetected = false;
 let randomNumber: number | null = null;
 let isAnimationPlaying = false;
+let isLightningPlaying = false; // 稲妻演出中フラグ
 
 // Zap検知用の状態
 let zapSubscription: ZapReceiptSubscription | null = null;
@@ -51,11 +53,15 @@ let fortuneMin = 1; // くじの最小値
 let fortuneMax = 20; // くじの最大値
 let fortuneTexts: string[] = []; // くじの内容配列
 let fortuneTextForNumber: string | null = null; // 生成された数字に対応するテキスト
+let hideOmikujiMessage = false; // 紙のおみくじを促すメッセージを非表示にするフラグ
+let testMode = false; // zapせずにくじを引けるテストモード
 
 // 設定データを読み込み
 onMount(() => {
   if (typeof window !== 'undefined') {
-    lightningAddress = localStorage.getItem('lightningAddress') || '';
+    const storedLightningAddress = localStorage.getItem('lightningAddress') || '';
+    const donateToOpenSats = localStorage.getItem('donateToOpenSats') === 'true';
+    lightningAddress = donateToOpenSats ? 'opensats@npub.cash' : storedLightningAddress;
     nostrPrivateKey = localStorage.getItem('nostrPrivateKey') || '';
     coinosApiToken = localStorage.getItem('coinosApiToken') || '';
     const storedZapAmount = localStorage.getItem('zapAmount');
@@ -67,12 +73,16 @@ onMount(() => {
     const storedFortuneMax = localStorage.getItem('fortuneMax');
     fortuneMax = storedFortuneMax ? parseInt(storedFortuneMax, 10) : 20;
     const storedFortuneTexts = localStorage.getItem('fortuneTexts');
-    fortuneTexts = storedFortuneTexts
-      ? storedFortuneTexts
+    const useDefaultFortuneTexts = localStorage.getItem('useDefaultFortuneTexts') === 'true';
+    const fortuneTextsSource = useDefaultFortuneTexts ? '大吉,中吉,小吉,吉,末吉,凶,大凶' : (storedFortuneTexts || '');
+    fortuneTexts = fortuneTextsSource
+      ? fortuneTextsSource
           .split(',')
           .map((t) => t.trim())
           .filter((t) => t)
       : [];
+    hideOmikujiMessage = localStorage.getItem('hideOmikujiMessage') === 'true';
+    testMode = localStorage.getItem('testMode') === 'true';
   }
 });
 
@@ -180,6 +190,7 @@ function resetFortuneSlip() {
   randomNumber = null;
   isWaitingForZap = false;
   isAnimationPlaying = false;
+  isLightningPlaying = false;
   stopZapMonitoring();
   clearMessages();
 }
@@ -187,6 +198,14 @@ function resetFortuneSlip() {
 async function generateQRCode() {
   clearMessages();
   resetFortuneSlip();
+
+  // テストモード: zapをスキップして直接くじを引く
+  if (testMode) {
+    randomNumber = generateLuckyNumber(fortuneMin, fortuneMax);
+    fortuneTextForNumber = getFortuneText(randomNumber, fortuneTexts);
+    isAnimationPlaying = true;
+    return;
+  }
 
   // 設定が不完全な場合は設定画面に誘導
   if (!lightningAddress || !nostrPrivateKey) {
@@ -273,14 +292,29 @@ async function generateQRCode() {
 }
 
 function showSubmit() {
-  return !qrCodeDataUrl && !isWaitingForZap && !zapDetected && !isAnimationPlaying;
+  return !qrCodeDataUrl && !isWaitingForZap && !zapDetected && !isAnimationPlaying && !isLightningPlaying;
 }
 
 function handleAnimationComplete() {
-  // アニメーション完了後に番号表示に切り替え
+  // アニメーション完了後
   isAnimationPlaying = false;
-  zapDetected = true;
 
+  if (hideOmikujiMessage && fortuneTextForNumber) {
+    // 稲妻演出を開始
+    isLightningPlaying = true;
+  } else {
+    zapDetected = true;
+    startAutoReset();
+  }
+}
+
+function handleLightningComplete() {
+  isLightningPlaying = false;
+  zapDetected = true;
+  startAutoReset();
+}
+
+function startAutoReset() {
   // 20秒後に自動リセット
   autoResetTimerId = window.setTimeout(() => {
     console.log('[Fortune Slip] Auto-resetting after 20 seconds');
@@ -385,23 +419,32 @@ function handleAnimationComplete() {
       </div>
       {/if}
 
+      <!-- 稲妻演出 -->
+      {#if isLightningPlaying && fortuneTextForNumber}
+        <LightningReveal text={fortuneTextForNumber} onComplete={handleLightningComplete} />
+      {/if}
+
       <!-- Zap検知後のランダム数字表示 -->
       {#if zapDetected && !isAnimationPlaying}
       <div class="mb-6 bg-white pl-4 pr-4 w-50">
         <div class="flex flex-col justify-center mb-4 border-b pb-4">
+          {#if !hideOmikujiMessage}
           <div class="h-36 flex items-center justify-center">
             <span class="font-bold text-rose-500 text-7xl mb-4">{randomNumber}</span>
           </div>
+          {/if}
           {#if fortuneTextForNumber}
-            <div class="text-center">
-              <p class="text-2xl font-semibold text-gray-800">{fortuneTextForNumber}</p>
+            <div class="text-center {hideOmikujiMessage ? 'h-36 flex items-center justify-center' : ''}">
+              <p class="{hideOmikujiMessage ? 'text-6xl font-extrabold text-rose-500' : 'text-2xl font-semibold text-gray-800'}">{fortuneTextForNumber}</p>
             </div>
           {/if}
         </div>
         <h3 class="text-2xl font-bold">All done!</h3>
+        {#if !hideOmikujiMessage}
         <p class="text-sm text-gray-600 text-center mb-4 mt-4 font-bold">
           Please take your<br/> numbered omikuji.
         </p>
+        {/if}
         <!-- もう一度ボタン -->
         <button
           on:click={resetFortuneSlip}
