@@ -4,6 +4,13 @@ import { base } from '$app/paths';
 import { onMount } from 'svelte';
 
 import backgroundImage from '$lib/assets/background.jpg';
+import {
+  OPENSATS_ADDRESS,
+  DEFAULT_FORTUNE_TEXTS,
+  validateForm as _validateForm,
+  applyDefaultFortuneTexts,
+  applyDonateToOpenSats,
+} from './settings.js';
 
 // フォームデータ
 let lightningAddress = '';
@@ -23,25 +30,16 @@ let testMode = false; // テストモード（zapなしでくじを引ける）
 let donateToOpenSats = false; // OpenSatsに寄付するフラグ
 let savedLightningAddress = ''; // donateToOpenSats切り替え前のアドレスを保持
 
-const OPENSATS_ADDRESS = 'opensats@npub.cash';
-const DEFAULT_FORTUNE_TEXTS = '大吉,中吉,小吉,吉,末吉,凶,大凶';
-
 function handleUseDefaultFortuneTextsChange() {
-  if (useDefaultFortuneTexts) {
-    savedFortuneTexts = fortuneTexts;
-    fortuneTexts = DEFAULT_FORTUNE_TEXTS;
-  } else {
-    fortuneTexts = savedFortuneTexts;
-  }
+  const result = applyDefaultFortuneTexts(useDefaultFortuneTexts, fortuneTexts, savedFortuneTexts);
+  fortuneTexts = result.fortuneTexts;
+  savedFortuneTexts = result.savedFortuneTexts;
 }
 
 function handleDonateToOpenSatsChange() {
-  if (donateToOpenSats) {
-    savedLightningAddress = lightningAddress;
-    lightningAddress = OPENSATS_ADDRESS;
-  } else {
-    lightningAddress = savedLightningAddress;
-  }
+  const result = applyDonateToOpenSats(donateToOpenSats, lightningAddress, savedLightningAddress);
+  lightningAddress = result.lightningAddress;
+  savedLightningAddress = result.savedLightningAddress;
 }
 
 // UI状態
@@ -105,51 +103,7 @@ onMount(() => {
 
 // バリデーション関数
 function validateForm(): boolean {
-  errors = {};
-
-  // ライトニングアドレスのバリデーション
-  if (!lightningAddress.trim()) {
-    errors.lightningAddress = 'ライトニングアドレスは必須です';
-  } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(lightningAddress)) {
-    errors.lightningAddress = '正しいメールアドレス形式で入力してください（例：user@domain.com）';
-  }
-
-  // Nostr秘密鍵のバリデーション
-  if (!nostrPrivateKey.trim()) {
-    errors.nostrPrivateKey = 'Nostr秘密鍵は必須です';
-  } else if (!nostrPrivateKey.startsWith('nsec1')) {
-    errors.nostrPrivateKey = 'nsec1で始まる有効な秘密鍵を入力してください';
-  }
-
-  // PIN検証
-  if (!pinCode.trim()) {
-    errors.pinCode = 'PINは必須です';
-  } else if (!/^\d{4}$/.test(pinCode)) {
-    errors.pinCode = '4桁の数字を入力してください';
-  }
-
-  // Zap金額のバリデーション
-  if (!zapAmount || zapAmount < 1 || zapAmount > 1000) {
-    errors.zapAmount = 'Zap金額は1〜1000 satsの範囲で入力してください';
-  } else if (!Number.isInteger(zapAmount)) {
-    errors.zapAmount = 'Zap金額は整数で入力してください';
-  }
-
-  // くじ範囲のバリデーション
-  if (!fortuneMin || !Number.isInteger(fortuneMin) || fortuneMin < 1) {
-    errors.fortuneMin = '最小値は1以上の整数を入力してください';
-  }
-  if (!fortuneMax || !Number.isInteger(fortuneMax) || fortuneMax < 1) {
-    errors.fortuneMax = '最大値は1以上の整数を入力してください';
-  }
-  if (fortuneMin && fortuneMax && fortuneMin >= fortuneMax) {
-    errors.fortuneMin = '最小値は最大値より小さくしてください';
-    errors.fortuneMax = '最大値は最小値より大きくしてください';
-  }
-
-  // Coinos API Token（オプショナル）はバリデーションなし
-  // fortuneTexts（オプショナル）もバリデーションなし
-
+  errors = _validateForm({ lightningAddress, nostrPrivateKey, pinCode, zapAmount, fortuneMin, fortuneMax }, testMode);
   return Object.keys(errors).length === 0;
 }
 
@@ -341,6 +295,7 @@ function handleClearData() {
         <div>
           <label for="lightning-address" class="block text-sm font-medium text-gray-700 mb-2">
             ライトニングアドレス
+            {#if testMode}<span class="ml-1 text-xs font-normal text-gray-400">（テストモード時は任意）</span>{/if}
           </label>
           <input
             id="lightning-address"
@@ -362,6 +317,7 @@ function handleClearData() {
         <div>
           <label for="nostr-private-key" class="block text-sm font-medium text-gray-700 mb-2">
             Nostr秘密鍵 (nsec形式)
+            {#if testMode}<span class="ml-1 text-xs font-normal text-gray-400">（テストモード時は任意）</span>{/if}
           </label>
           <input
             id="nostr-private-key"
@@ -551,16 +507,23 @@ function handleClearData() {
           </div>
 
           <!-- テストモード -->
-          <div class="flex items-center mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-            <input
-              id="test-mode"
-              type="checkbox"
-              bind:checked={testMode}
-              class="h-4 w-4 text-yellow-600 border-gray-300 rounded focus:ring-yellow-500"
-            />
-            <label for="test-mode" class="ml-2 text-sm text-yellow-800">
-              テストモード（zapなしでくじを引ける）
-            </label>
+          <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+            <div class="flex items-center">
+              <input
+                id="test-mode"
+                type="checkbox"
+                bind:checked={testMode}
+                class="h-4 w-4 text-yellow-600 border-gray-300 rounded focus:ring-yellow-500"
+              />
+              <label for="test-mode" class="ml-2 text-sm font-medium text-yellow-800">
+                テストモード（外部通信なしでくじを引ける）
+              </label>
+            </div>
+            {#if testMode}
+              <p class="mt-2 text-xs text-yellow-700">
+                ライトニングアドレス・Nostr秘密鍵の設定なしで動作します。Zapや外部APIへの通信は行いません。
+              </p>
+            {/if}
           </div>
         </div>
 

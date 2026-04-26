@@ -74,7 +74,7 @@ onMount(() => {
     fortuneMax = storedFortuneMax ? parseInt(storedFortuneMax, 10) : 20;
     const storedFortuneTexts = localStorage.getItem('fortuneTexts');
     const useDefaultFortuneTexts = localStorage.getItem('useDefaultFortuneTexts') === 'true';
-    const fortuneTextsSource = useDefaultFortuneTexts ? '大吉,中吉,小吉,吉,末吉,凶,大凶' : (storedFortuneTexts || '');
+    const fortuneTextsSource = useDefaultFortuneTexts ? '大吉,中吉,小吉,吉,末吉,凶,大凶' : storedFortuneTexts || '';
     fortuneTexts = fortuneTextsSource
       ? fortuneTextsSource
           .split(',')
@@ -127,9 +127,6 @@ async function onZapDetected(zapReceipt: NostrEvent) {
     return;
   }
 
-  // 早期にフラグを立てて二重実行を防ぐ
-  zapDetected = true;
-
   console.log('[Fortune Slip] Zap detected!', zapReceipt);
 
   // coinosへのポーリングを停止
@@ -141,8 +138,10 @@ async function onZapDetected(zapReceipt: NostrEvent) {
   randomNumber = generateLuckyNumber(fortuneMin, fortuneMax);
   // おみくじテキストを取得
   fortuneTextForNumber = getFortuneText(randomNumber, fortuneTexts);
-  // アニメーション表示を開始
+  // アニメーション開始を先にセットしてからzapDetectedを立てる
+  // (zapDetected=trueかつisAnimationPlaying=falseだと結果画面が先に表示されてしまうため)
   isAnimationPlaying = true;
+  zapDetected = true;
   stopZapMonitoring();
 }
 
@@ -162,9 +161,6 @@ async function onCoinosPaymentDetected(payment: any) {
     return;
   }
 
-  // 早期にフラグを立てて二重実行を防ぐ
-  zapDetected = true;
-
   console.log('[Fortune Slip] Coinos payment detected!', payment);
 
   // QRコードを非表示
@@ -173,8 +169,9 @@ async function onCoinosPaymentDetected(payment: any) {
   randomNumber = generateLuckyNumber(fortuneMin, fortuneMax);
   // おみくじテキストを取得
   fortuneTextForNumber = getFortuneText(randomNumber, fortuneTexts);
-  // アニメーション表示を開始
+  // アニメーション開始を先にセットしてからzapDetectedを立てる
   isAnimationPlaying = true;
+  zapDetected = true;
   stopZapMonitoring();
 }
 
@@ -296,16 +293,9 @@ function showSubmit() {
 }
 
 function handleAnimationComplete() {
-  // アニメーション完了後
+  // アニメーション完了後、常に稲妻演出を開始
   isAnimationPlaying = false;
-
-  if (hideOmikujiMessage && fortuneTextForNumber) {
-    // 稲妻演出を開始
-    isLightningPlaying = true;
-  } else {
-    zapDetected = true;
-    startAutoReset();
-  }
+  isLightningPlaying = true;
 }
 
 function handleLightningComplete() {
@@ -420,8 +410,8 @@ function startAutoReset() {
       {/if}
 
       <!-- 稲妻演出 -->
-      {#if isLightningPlaying && fortuneTextForNumber}
-        <LightningReveal text={fortuneTextForNumber} onComplete={handleLightningComplete} />
+      {#if isLightningPlaying}
+        <LightningReveal text={fortuneTextForNumber ?? ''} onComplete={handleLightningComplete} />
       {/if}
 
       <!-- Zap検知後のランダム数字表示 -->
