@@ -7,16 +7,22 @@ import OmikujiAnimation from '$lib/components/OmikujiAnimation.svelte';
 import LightningReveal from '$lib/components/LightningReveal.svelte';
 import {
   decodeNsec,
+  decodeNpub,
+  fetchMetadataFromRelays,
   createTextEvent,
+  createTextEventNip07,
   createZapRequest,
+  createZapRequestNip07,
   createMetadataEvent,
   getZapInvoiceFromEndpoint,
   subscribeToZapReceipts,
+  isNip07Available,
   type ZapReceiptSubscription,
   type NostrEvent,
   generateLuckyNumber,
   generateRandomBase64,
   getFortuneText,
+  shouldShowConfetti,
 } from '$lib/nostr';
 import { generateLightningQRCode } from '$lib/qrcode';
 import { nip57 } from 'nostr-tools';
@@ -52,9 +58,13 @@ let zapAmount = 100; // Zap金額（sats）デフォルト値
 let fortuneMin = 1; // くじの最小値
 let fortuneMax = 20; // くじの最大値
 let fortuneTexts: string[] = []; // くじの内容配列
+let confettiTexts: string[] = []; // 紙吹雪を表示するテキスト配列
 let fortuneTextForNumber: string | null = null; // 生成された数字に対応するテキスト
+let showConfettiForResult = true; // 結果に紙吹雪を表示するか
 let hideOmikujiMessage = false; // 紙のおみくじを促すメッセージを非表示にするフラグ
 let testMode = false; // zapせずにくじを引けるテストモード
+let zapRecipientNpub = ''; // Zap先の公開鍵（npub形式、任意）
+let nip07LoggedIn = false; // NIP-07ログイン状態
 
 // 設定データを読み込み
 onMount(() => {
@@ -72,17 +82,26 @@ onMount(() => {
     fortuneMin = storedFortuneMin ? parseInt(storedFortuneMin, 10) : 1;
     const storedFortuneMax = localStorage.getItem('fortuneMax');
     fortuneMax = storedFortuneMax ? parseInt(storedFortuneMax, 10) : 20;
-    const storedFortuneTexts = localStorage.getItem('fortuneTexts');
     const useDefaultFortuneTexts = localStorage.getItem('useDefaultFortuneTexts') === 'true';
-    const fortuneTextsSource = useDefaultFortuneTexts ? '大吉,中吉,小吉,吉,末吉,凶,大凶' : storedFortuneTexts || '';
-    fortuneTexts = fortuneTextsSource
-      ? fortuneTextsSource
-          .split(',')
-          .map((t) => t.trim())
-          .filter((t) => t)
-      : [];
+    const confettiSrc = useDefaultFortuneTexts
+      ? '大吉,中吉,小吉,吉,末吉'
+      : localStorage.getItem('confettiFortuneTexts') || '大吉,中吉,小吉,吉,末吉';
+    const noConfettiSrc = useDefaultFortuneTexts
+      ? '凶,大凶'
+      : localStorage.getItem('noConfettiFortuneTexts') || '凶,大凶';
+    confettiTexts = confettiSrc
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t);
+    const noConfettiTexts = noConfettiSrc
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t);
+    fortuneTexts = [...confettiTexts, ...noConfettiTexts];
     hideOmikujiMessage = localStorage.getItem('hideOmikujiMessage') === 'true';
     testMode = localStorage.getItem('testMode') === 'true';
+    zapRecipientNpub = localStorage.getItem('zapRecipientNpub') || '';
+    nip07LoggedIn = !!localStorage.getItem('nip07Pubkey') && isNip07Available();
   }
 });
 
@@ -122,57 +141,35 @@ function stopZapMonitoring() {
   paymentId = null;
 }
 
-async function onZapDetected(zapReceipt: NostrEvent) {
-  if (zapDetected) {
-    return;
-  }
+// 支払い検知時の共通処理
+function handlePaymentDetected() {
+  if (zapDetected) return;
 
-  console.log('[Fortune Slip] Zap detected!', zapReceipt);
-
-  // coinosへのポーリングを停止
-  coinosPollingSubscription?.stop();
-
-  // QRコードを非表示
   qrCodeDataUrl = '';
-  // 番号生成（設定された範囲を使用）
   randomNumber = generateLuckyNumber(fortuneMin, fortuneMax);
-  // おみくじテキストを取得
   fortuneTextForNumber = getFortuneText(randomNumber, fortuneTexts);
-  // アニメーション開始を先にセットしてからzapDetectedを立てる
-  // (zapDetected=trueかつisAnimationPlaying=falseだと結果画面が先に表示されてしまうため)
+  showConfettiForResult = shouldShowConfetti(fortuneTextForNumber, confettiTexts);
+  // isAnimationPlayingを先にセット（zapDetected=trueだけだと結果画面が先に表示されるため）
   isAnimationPlaying = true;
   zapDetected = true;
   stopZapMonitoring();
+}
+
+async function onZapDetected(zapReceipt: NostrEvent) {
+  console.log('[Fortune Slip] Zap detected!', zapReceipt);
+  handlePaymentDetected();
 }
 
 function onZapError(error: string) {
   console.error('[Fortune Slip] Zap verification error:', error);
-
-  // Zapエラーが発生した場合
   errorMessage = `Zap検証エラー: ${error}`;
-
-  // QRコードを非表示
   qrCodeDataUrl = '';
   stopZapMonitoring();
 }
 
-async function onCoinosPaymentDetected(payment: any) {
-  if (zapDetected) {
-    return;
-  }
-
+async function onCoinosPaymentDetected(payment: unknown) {
   console.log('[Fortune Slip] Coinos payment detected!', payment);
-
-  // QRコードを非表示
-  qrCodeDataUrl = '';
-  // 番号生成（設定された範囲を使用）
-  randomNumber = generateLuckyNumber(fortuneMin, fortuneMax);
-  // おみくじテキストを取得
-  fortuneTextForNumber = getFortuneText(randomNumber, fortuneTexts);
-  // アニメーション開始を先にセットしてからzapDetectedを立てる
-  isAnimationPlaying = true;
-  zapDetected = true;
-  stopZapMonitoring();
+  handlePaymentDetected();
 }
 
 function resetFortuneSlip() {
@@ -200,35 +197,61 @@ async function generateQRCode() {
   if (testMode) {
     randomNumber = generateLuckyNumber(fortuneMin, fortuneMax);
     fortuneTextForNumber = getFortuneText(randomNumber, fortuneTexts);
+    showConfettiForResult = shouldShowConfetti(fortuneTextForNumber, confettiTexts);
     isAnimationPlaying = true;
     return;
   }
 
   // 設定が不完全な場合は設定画面に誘導
-  if (!lightningAddress || !nostrPrivateKey) {
-    errorMessage = '設定が不完全です。まず設定画面でライトニングアドレスとNostr秘密鍵を入力してください。';
+  if (!nip07LoggedIn && !zapRecipientNpub && (!lightningAddress || !nostrPrivateKey)) {
+    errorMessage =
+      '設定が不完全です。NIP-07ログイン、Zap先の公開鍵、またはライトニングアドレスとNostr秘密鍵を設定してください。';
+    return;
+  }
+
+  if (!nip07LoggedIn && !nostrPrivateKey) {
+    errorMessage = '設定が不完全です。NIP-07でログインするか、Nostr秘密鍵を設定してください。';
     return;
   }
 
   isLoading = true;
 
   try {
-    // 1. Nostr秘密鍵をデコード
-    const privateKeyBytes = decodeNsec(nostrPrivateKey);
+    // 1. イベント作成（NIP-07 or 秘密鍵）
+    let textEvent: NostrEvent;
+    if (nip07LoggedIn) {
+      textEvent = await createTextEventNip07('');
+    } else {
+      const privateKeyBytes = decodeNsec(nostrPrivateKey);
+      textEvent = createTextEvent(privateKeyBytes, '');
+    }
 
-    // 2. Nostr kind 1イベントを作成・送信
-    const textEvent = createTextEvent(privateKeyBytes, '');
+    // 3. Zap先のmetadata eventを取得・作成
+    let metadataEvent: NostrEvent;
 
-    // 3. recipientのmetadata eventを作成（簡易版）
-    // 実際のアプリではリレーから取得するが、ここでは設定値から作成
-    const recipientPubkey = textEvent.pubkey; // 自分自身にzapする場合
-    const metadataEvent = createMetadataEvent(recipientPubkey, lightningAddress);
+    if (zapRecipientNpub.trim()) {
+      // npub設定がある場合: リレーからkind:0を取得してlud16を使う
+      const recipientPubkeyHex = decodeNpub(zapRecipientNpub.trim());
+      console.log('[Fortune Slip] Fetching metadata for npub:', zapRecipientNpub);
+      const metadata = await fetchMetadataFromRelays(recipientPubkeyHex);
+      if (!metadata || !metadata.lud16) {
+        errorMessage = 'Zap先のメタデータからlud16（ライトニングアドレス）が見つかりませんでした。';
+        isLoading = false;
+        return;
+      }
+      console.log('[Fortune Slip] Found lud16:', metadata.lud16);
+      metadataEvent = createMetadataEvent(recipientPubkeyHex, metadata.lud16);
+    } else {
+      // 従来の方式: 自分のライトニングアドレスを使う
+      const recipientPubkey = textEvent.pubkey;
+      metadataEvent = createMetadataEvent(recipientPubkey, lightningAddress);
+    }
 
     // 4. zapUrl取得
     const zapUrl = await nip57.getZapEndpoint(metadataEvent);
     if (zapUrl === null) {
-      errorMessage = `Zapエンドポイントが見つかりません。ライトニングアドレス: ${lightningAddress}`;
-      throw new Error(`Zapエンドポイントが見つかりません。ライトニングアドレス: ${lightningAddress}`);
+      errorMessage = 'Zapエンドポイントが見つかりません。';
+      throw new Error('Zapエンドポイントが見つかりません。');
     }
 
     console.debug('[zap endpoint]', zapUrl);
@@ -241,12 +264,15 @@ async function generateQRCode() {
     const satsAmount = zapAmount * 1000;
 
     // 6. Zapリクエストを作成（ランダム値をcommentに埋め込む）
-    const zapRequest = createZapRequest(
-      privateKeyBytes,
-      textEvent, // 完全なeventオブジェクト
-      satsAmount,
-      paymentId, // 識別用IDを埋め込む
-    );
+    // zapRecipientNpub が設定されている場合は ProfileZap（recipient公開鍵宛）
+    const recipientPubkey = zapRecipientNpub.trim() ? decodeNpub(zapRecipientNpub.trim()) : undefined;
+    let zapRequest: NostrEvent;
+    if (nip07LoggedIn) {
+      zapRequest = await createZapRequestNip07(textEvent, satsAmount, paymentId, recipientPubkey);
+    } else {
+      const privateKeyBytes = decodeNsec(nostrPrivateKey);
+      zapRequest = createZapRequest(privateKeyBytes, textEvent, satsAmount, paymentId, recipientPubkey);
+    }
 
     // 6. Zapインボイスを取得
     const invoice = await getZapInvoiceFromEndpoint(zapUrl, satsAmount, zapRequest);
@@ -265,6 +291,7 @@ async function generateQRCode() {
       300000, // 5分タイムアウト
       coinosApiToken, // Coinos API Token（オプション）
       onZapError, // エラーコールバック
+      recipientPubkey, // ProfileZap時のrecipient公開鍵
     );
 
     // 10. Coinos APIポーリングを開始（トークンが設定されている場合のフォールバック）
@@ -411,12 +438,12 @@ function startAutoReset() {
 
       <!-- 稲妻演出 -->
       {#if isLightningPlaying}
-        <LightningReveal text={fortuneTextForNumber ?? ''} onComplete={handleLightningComplete} />
+        <LightningReveal text={fortuneTextForNumber ?? ''} showConfetti={showConfettiForResult} onComplete={handleLightningComplete} />
       {/if}
 
       <!-- Zap検知後のランダム数字表示 -->
-      {#if zapDetected && !isAnimationPlaying}
-      <div class="mb-6 bg-white pl-4 pr-4 w-50">
+      {#if zapDetected && !isAnimationPlaying && !isLightningPlaying}
+      <div class="mb-6 bg-white pl-4 pr-4 w-50 animate-fade-in">
         <div class="flex flex-col justify-center mb-4 border-b pb-4">
           {#if !hideOmikujiMessage}
           <div class="h-36 flex items-center justify-center">
@@ -447,3 +474,13 @@ function startAutoReset() {
     </div>
   </div>
 </div>
+
+<style>
+  @keyframes fade-in {
+    0%   { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.6s ease-out forwards;
+  }
+</style>

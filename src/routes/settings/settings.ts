@@ -1,5 +1,9 @@
+export { DEFAULT_RELAYS, serializeRelays, validateRelayText } from '$lib/nostr/relay.js';
+export { validateNpub } from '$lib/nostr/metadata.js';
+
 export const OPENSATS_ADDRESS = 'opensats@npub.cash';
-export const DEFAULT_FORTUNE_TEXTS = '大吉,中吉,小吉,吉,末吉,凶,大凶';
+export const DEFAULT_CONFETTI_TEXTS = '大吉,中吉,小吉,吉,末吉';
+export const DEFAULT_NO_CONFETTI_TEXTS = '凶,大凶';
 
 export interface SettingsFormState {
   lightningAddress: string;
@@ -12,23 +16,36 @@ export interface SettingsFormState {
 
 export type SettingsErrors = Record<string, string>;
 
-export function validateForm(state: SettingsFormState, testMode = false): SettingsErrors {
+export interface ValidateFormOptions {
+  skipLightningAddress?: boolean;
+  skipNostrKey?: boolean;
+}
+
+export function validateForm(state: SettingsFormState, options: boolean | ValidateFormOptions = false): SettingsErrors {
   const errors: SettingsErrors = {};
 
-  if (!testMode) {
+  // 後方互換: boolean の場合は両方スキップ（testMode用）
+  const opts: ValidateFormOptions =
+    typeof options === 'boolean' ? { skipLightningAddress: options, skipNostrKey: options } : options;
+
+  // ライトニングアドレス
+  if (!opts.skipLightningAddress) {
     if (!state.lightningAddress.trim()) {
       errors.lightningAddress = 'ライトニングアドレスは必須です';
     } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(state.lightningAddress)) {
       errors.lightningAddress = '正しいメールアドレス形式で入力してください（例：user@domain.com）';
     }
+  } else if (state.lightningAddress.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(state.lightningAddress)) {
+    errors.lightningAddress = '正しいメールアドレス形式で入力してください（例：user@domain.com）';
+  }
 
+  // Nostr秘密鍵
+  if (!opts.skipNostrKey) {
     if (!state.nostrPrivateKey.trim()) {
       errors.nostrPrivateKey = 'Nostr秘密鍵は必須です';
     } else if (!state.nostrPrivateKey.startsWith('nsec1')) {
       errors.nostrPrivateKey = 'nsec1で始まる有効な秘密鍵を入力してください';
     }
-  } else if (state.lightningAddress.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(state.lightningAddress)) {
-    errors.lightningAddress = '正しいメールアドレス形式で入力してください（例：user@domain.com）';
   } else if (state.nostrPrivateKey.trim() && !state.nostrPrivateKey.startsWith('nsec1')) {
     errors.nostrPrivateKey = 'nsec1で始まる有効な秘密鍵を入力してください';
   }
@@ -57,17 +74,6 @@ export function validateForm(state: SettingsFormState, testMode = false): Settin
   }
 
   return errors;
-}
-
-export function applyDefaultFortuneTexts(
-  enabled: boolean,
-  currentTexts: string,
-  savedTexts: string,
-): { fortuneTexts: string; savedFortuneTexts: string } {
-  if (enabled) {
-    return { fortuneTexts: DEFAULT_FORTUNE_TEXTS, savedFortuneTexts: currentTexts };
-  }
-  return { fortuneTexts: savedTexts, savedFortuneTexts: savedTexts };
 }
 
 export function applyDonateToOpenSats(

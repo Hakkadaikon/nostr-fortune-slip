@@ -1,7 +1,7 @@
 import { SimplePool } from 'nostr-tools';
 import type { Event, Filter } from 'nostr-tools';
 import type { NostrEvent, ZapReceiptSubscription } from './types.js';
-import { RELAYS } from './relay.js';
+import { getRelays } from './relay.js';
 import { verifyCoinosPayment } from '../coinos/index.js';
 
 /**
@@ -156,24 +156,27 @@ export function subscribeToZapReceipts(
   timeoutMs: number = 300000, // 5分のタイムアウト
   coinosApiToken?: string, // Coinos API Token（オプション）
   onZapError?: (error: string) => void, // エラーコールバック（オプション）
+  recipientPubkey?: string, // ProfileZap時のrecipient公開鍵
 ): ZapReceiptSubscription {
   const pool = new SimplePool();
+  const relays = getRelays();
   const subscriptionId = `zap-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   console.log(`[Zap Monitor] Starting subscription for event: ${targetEventId}`);
   console.log(`[Zap Monitor] Coinos verification enabled:`, !!coinosApiToken);
+  console.log(`[Zap Monitor] Relays:`, relays);
 
-  // フィルターを正しいFilter型で作成
+  // フィルターを作成: ProfileZap時は#p、EventZap時は#e
   const filter: Filter = {
     kinds: [9735],
     since: Math.floor(Date.now() / 1000) - 300,
-    '#e': [targetEventId], // Filter型のindex signatureを使用
+    ...(recipientPubkey ? { '#p': [recipientPubkey] } : { '#e': [targetEventId] }),
   };
 
   console.log(`[Zap Monitor] Filter:`, JSON.stringify(filter, null, 2));
 
-  // サブスクリプション開始 - 正しい型を使用
-  const subscription = pool.subscribeMany(RELAYS, [filter], {
+  // サブスクリプション開始
+  const subscription = pool.subscribeMany(relays, filter, {
     onevent: async (event: Event) => {
       console.log(`[Zap Monitor] Received zap receipt:`, event);
 
@@ -226,7 +229,7 @@ export function subscribeToZapReceipts(
   const timeoutId = setTimeout(() => {
     console.log(`[Zap Monitor] Subscription timeout for event: ${targetEventId}`);
     subscription.close();
-    pool.close(RELAYS);
+    pool.close(relays);
   }, timeoutMs);
 
   // 停止関数
@@ -236,7 +239,7 @@ export function subscribeToZapReceipts(
     subscription.close();
     // 少し待ってからプールを閉じる
     setTimeout(() => {
-      pool.close(RELAYS);
+      pool.close(relays);
     }, 1000);
   };
 
