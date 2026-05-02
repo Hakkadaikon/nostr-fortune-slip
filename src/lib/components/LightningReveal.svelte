@@ -21,7 +21,6 @@ interface Seg {
   w: number;
 }
 
-// branchRate: 枝分かれ確率, branchDepthPenalty: 枝の深度ペナルティ
 function buildSegs(
   x1: number,
   y1: number,
@@ -44,9 +43,8 @@ function buildSegs(
   buildSegs(x1, y1, midX, midY, depth - 1, width, out, branchRate, branchDepthPenalty);
   buildSegs(midX, midY, x2, y2, depth - 1, width, out, branchRate, branchDepthPenalty);
 
-  // 枝分かれ: 「血管のように這う」
   if (depth > 1 && Math.random() < branchRate) {
-    const angle = (Math.random() - 0.5) * 1.4; // ±40度くらい
+    const angle = (Math.random() - 0.5) * 1.4;
     const branchLen = len * (0.3 + Math.random() * 0.3);
     const bx = midX + Math.sin(angle) * branchLen;
     const by = midY + Math.cos(angle) * branchLen * 0.7 + branchLen * 0.3;
@@ -64,26 +62,18 @@ interface BoltData {
 function generateBolts(w: number, h: number): BoltData[] {
   const bolts: BoltData[] = [];
 
-  // ── 中央の黄金の雷（太い・枝分かれ密・黄→オレンジグラデ） ──
-  // オレンジの外殻
   const mainOuter: Seg[] = [];
   buildSegs(w * 0.5 + (Math.random() - 0.5) * 10, 0, w * 0.5 + (Math.random() - 0.5) * 30, h, 7, 5, mainOuter, 0.55, 2);
   bolts.push({ segs: mainOuter, color: '#f97316', glowColor: '#f97316', glowWidth: 7 });
-
-  // 黄色のコア（同じパスを少し細く）
   bolts.push({ segs: mainOuter, color: '#facc15', glowColor: '#facc15', glowWidth: 4 });
-
-  // 白い芯
   bolts.push({ segs: mainOuter, color: '#ffffff', glowColor: '#fffbe6', glowWidth: 1.5 });
 
-  // ── 中央脇の黄金サブ ──
   for (const xr of [0.38, 0.46, 0.54, 0.62]) {
     const segs: Seg[] = [];
     buildSegs(w * xr, 0, w * xr + (Math.random() - 0.5) * 50, h * (0.75 + Math.random() * 0.2), 6, 2, segs, 0.45, 2);
     bolts.push({ segs, color: '#facc15', glowColor: '#f59e0b', glowWidth: 3 });
   }
 
-  // ── 左右の紫の雷（細く鋭い） ──
   const purpleDefs: [number, number, number][] = [
     [0.22, 0.12, 0.95],
     [0.78, 0.88, 0.95],
@@ -113,7 +103,6 @@ function drawBolts(ctx: CanvasRenderingContext2D, bolts: BoltData[], alpha: numb
   ctx.globalCompositeOperation = 'screen';
   ctx.lineCap = 'round';
 
-  // パス1: グロー（太い半透明）
   ctx.globalAlpha = Math.min(alpha * 0.35, 1);
   for (const bolt of bolts) {
     ctx.beginPath();
@@ -126,7 +115,6 @@ function drawBolts(ctx: CanvasRenderingContext2D, bolts: BoltData[], alpha: numb
     ctx.stroke();
   }
 
-  // パス2: コア（lineWidthが異なるsegをグループ化して描画）
   ctx.globalAlpha = Math.min(alpha, 1);
   for (const bolt of bolts) {
     ctx.strokeStyle = bolt.color;
@@ -150,7 +138,6 @@ function drawBolts(ctx: CanvasRenderingContext2D, bolts: BoltData[], alpha: numb
   ctx.restore();
 }
 
-// 1ストライク: フェードイン → 維持 → フェードアウト
 function animateStrike(ctx: CanvasRenderingContext2D, w: number, h: number, bolts: BoltData[], onDone: () => void) {
   const FADE_IN = 150;
   const HOLD = 400;
@@ -206,10 +193,10 @@ function startLightningAnimation(canvas: HTMLCanvasElement): number {
 
 function fireConfetti() {
   const colors = ['#facc15', '#fbbf24', '#f59e0b', '#ffffff', '#a855f7', '#38bdf8'];
-  // モバイルではパーティクル数を半減してフレームドロップを防止
   const s = window.innerWidth < 768 ? 0.5 : 1;
   const p = (n: number) => Math.round(n * s);
 
+  // 全 burst に disableForReducedMotion を効かせる: 上の早期リターンで漏れた場合の保険
   confetti({
     particleCount: p(350),
     spread: 160,
@@ -220,7 +207,6 @@ function fireConfetti() {
     disableForReducedMotion: true,
   });
 
-  // バースト2: 左右から
   setTimeout(() => {
     confetti({
       particleCount: p(200),
@@ -230,6 +216,7 @@ function fireConfetti() {
       angle: 55,
       origin: { x: 0.0, y: 0.1 },
       colors,
+      disableForReducedMotion: true,
     });
     confetti({
       particleCount: p(200),
@@ -239,10 +226,10 @@ function fireConfetti() {
       angle: 125,
       origin: { x: 1.0, y: 0.1 },
       colors,
+      disableForReducedMotion: true,
     });
   }, 120);
 
-  // バースト3: 中央上段から再噴射
   setTimeout(() => {
     confetti({
       particleCount: p(150),
@@ -251,6 +238,7 @@ function fireConfetti() {
       gravity: 0.8,
       origin: { x: 0.35, y: 0.05 },
       colors,
+      disableForReducedMotion: true,
     });
     confetti({
       particleCount: p(150),
@@ -259,10 +247,10 @@ function fireConfetti() {
       gravity: 0.8,
       origin: { x: 0.65, y: 0.05 },
       colors,
+      disableForReducedMotion: true,
     });
   }, 300);
 
-  // バースト4: 四隅から追い打ち
   setTimeout(() => {
     confetti({
       particleCount: p(120),
@@ -272,6 +260,7 @@ function fireConfetti() {
       angle: 45,
       origin: { x: 0.0, y: 0.0 },
       colors,
+      disableForReducedMotion: true,
     });
     confetti({
       particleCount: p(120),
@@ -281,10 +270,10 @@ function fireConfetti() {
       angle: 135,
       origin: { x: 1.0, y: 0.0 },
       colors,
+      disableForReducedMotion: true,
     });
   }, 500);
 
-  // バースト5: 最後にもう一発
   setTimeout(() => {
     confetti({
       particleCount: p(250),
@@ -293,6 +282,7 @@ function fireConfetti() {
       gravity: 0.65,
       origin: { x: 0.5, y: 0.05 },
       colors,
+      disableForReducedMotion: true,
     });
   }, 700);
 }
@@ -300,6 +290,12 @@ function fireConfetti() {
 onMount(() => {
   if (!canvasEl) return;
 
+  // この経路に来ている時点でオペレータが設定で「派手」を明示的に選択している。
+  // OS の prefers-reduced-motion はオペレータ自身の好みであって、
+  // キオスクの来場者の同意を表すものではないため、ここでは尊重しない。
+  // 確認なしで来場者にフラッシュ表示を見せたくない場合は、設定で
+  // 「ノーマル」を選ぶ運用にする。canvas-confetti 側の
+  // disableForReducedMotion オプションは無害なので残してある。
   canvasEl.width = window.innerWidth;
   canvasEl.height = window.innerHeight;
 
@@ -322,19 +318,14 @@ onMount(() => {
 });
 </script>
 
-<!-- オーバーレイ全体 -->
 <div class="fixed inset-0 flex items-center justify-center z-50 overflow-hidden">
-
-  <!-- 暗背景 -->
   <div class="absolute inset-0 bg-black/88"></div>
 
-  <!-- 稲妻 Canvas -->
   <canvas
     bind:this={canvasEl}
     class="absolute inset-0 w-full h-full pointer-events-none"
   ></canvas>
 
-  <!-- テキスト出現 -->
   {#if phase === 'reveal' || phase === 'done'}
     <div class="relative flex flex-col items-center gap-6 animate-text-reveal">
       <p class="text-8xl font-extrabold text-yellow-300 drop-shadow-[0_0_40px_rgba(250,204,21,1.0)] tracking-widest">
@@ -342,7 +333,6 @@ onMount(() => {
       </p>
     </div>
   {/if}
-
 </div>
 
 <style>
